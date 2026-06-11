@@ -173,7 +173,7 @@ var cl={bg:"#0f172a",card:"#1e293b",alt:"#334155",accent:"#f97316",text:"#f1f5f9
 // --- React helpers using createElement ---
 var h = React.createElement;
 
-function Btn(p){var vs={primary:{background:cl.accent,color:"#fff"},secondary:{background:cl.alt,color:cl.text},danger:{background:cl.danger,color:"#fff"},success:{background:cl.success,color:"#fff"},ghost:{background:"transparent",color:cl.accent,border:"1px solid "+cl.accent}};var v=p.variant||"primary";return h("button",{style:Object.assign({padding:p.small?"6px 14px":"10px 20px",borderRadius:8,border:"none",fontWeight:600,fontSize:p.small?13:14,cursor:p.disabled?"not-allowed":"pointer",opacity:p.disabled?.5:1},vs[v],p.style||{}),onClick:p.onClick,disabled:p.disabled},p.children)}
+function Btn(p){var vs={primary:{background:cl.accent,color:"#fff"},secondary:{background:cl.alt,color:cl.text},danger:{background:cl.danger,color:"#fff"},success:{background:cl.success,color:"#fff"},ghost:{background:"transparent",color:cl.accent,border:"1px solid "+cl.accent}};var v=p.variant||"primary";return h("button",{type:"button",style:Object.assign({padding:p.small?"6px 14px":"10px 20px",borderRadius:8,border:"none",fontWeight:600,fontSize:p.small?13:14,cursor:p.disabled?"not-allowed":"pointer",opacity:p.disabled?.5:1},vs[v],p.style||{}),onClick:p.onClick,disabled:p.disabled},p.children)}
 
 function Inp(p){return h("div",{style:Object.assign({display:"flex",flexDirection:"column",gap:4},p.style||{})},p.label&&h("label",{style:{fontSize:13,color:cl.muted,fontWeight:500}},p.label),h("input",{type:p.type||"text",value:p.value,onChange:function(e){p.onChange(e.target.value)},placeholder:p.placeholder,readOnly:p.readOnly,autoFocus:p.autoFocus,style:{padding:"10px 14px",borderRadius:8,border:"1px solid "+cl.border,background:p.readOnly?cl.alt:cl.input,color:cl.text,fontSize:14,outline:"none",opacity:p.readOnly?.7:1}}))}
 
@@ -192,24 +192,32 @@ function TabPersonal(p){
   var _s=React.useState(""),search=_s[0],setSearch=_s[1];
 
   var save=async function(){
-    if(!legajo.trim()||!nombre.trim())return p.showToast("Completar legajo y nombre","error");
-    var num=parseInt(legajo);if(isNaN(num))return p.showToast("Legajo debe ser num\u00e9rico","error");
+    var legajoVal = legajo.trim();
+    var nombreVal = nombre.trim();
+    console.log("SAVE clicked:", legajoVal, nombreVal);
+    if(!legajoVal || !nombreVal) return p.showToast("Completar legajo y nombre","error");
+    var num = parseInt(legajoVal, 10);
+    if(isNaN(num) || num <= 0) return p.showToast("Legajo debe ser un número válido","error");
     if(editIdx>=0){
       var oldLeg=origLeg;
       if(num!==oldLeg&&p.employees.some(function(e){return e.legajo===num}))return p.showToast("Ese legajo ya existe","error");
-      if(num!==oldLeg)await FB.deleteEmpleado(oldLeg);
-      await FB.saveEmpleado({legajo:num,nombre:nombre.trim().toUpperCase()});
-      if(num!==oldLeg||nombre.trim().toUpperCase()!==p.employees[editIdx].nombre){
-        await FB.updateValesForLegajo(oldLeg,num,nombre.trim().toUpperCase(),p.vouchers);
-        p.setVouchers(p.vouchers.map(function(v){return v.legajo===oldLeg?Object.assign({},v,{legajo:num,nombre:nombre.trim().toUpperCase()}):v}));
-      }
-      var u=p.employees.slice();u[editIdx]={legajo:num,nombre:nombre.trim().toUpperCase()};u.sort(function(a,b){return a.legajo-b.legajo});
-      p.setEmployees(u);setEditIdx(-1);setOrigLeg(null);p.showToast("Legajo actualizado");
+      try {
+        if(num!==oldLeg)await FB.deleteEmpleado(oldLeg);
+        await FB.saveEmpleado({legajo:num,nombre:nombreVal.toUpperCase()});
+        if(num!==oldLeg||nombreVal.toUpperCase()!==p.employees[editIdx].nombre){
+          await FB.updateValesForLegajo(oldLeg,num,nombreVal.toUpperCase(),p.vouchers);
+          p.setVouchers(p.vouchers.map(function(v){return v.legajo===oldLeg?Object.assign({},v,{legajo:num,nombre:nombreVal.toUpperCase()}):v}));
+        }
+        var u=p.employees.slice();u[editIdx]={legajo:num,nombre:nombreVal.toUpperCase()};u.sort(function(a,b){return a.legajo-b.legajo});
+        p.setEmployees(u);setEditIdx(-1);setOrigLeg(null);p.showToast("Legajo actualizado");
+      } catch(err) { p.showToast("Error al guardar: " + err.message, "error"); return; }
     }else{
-      if(p.employees.some(function(e){return e.legajo===num}))return p.showToast("Legajo ya existe","error");
-      await FB.saveEmpleado({legajo:num,nombre:nombre.trim().toUpperCase()});
-      var u=p.employees.concat({legajo:num,nombre:nombre.trim().toUpperCase()});u.sort(function(a,b){return a.legajo-b.legajo});
-      p.setEmployees(u);p.showToast("Legajo agregado");
+      if(p.employees.some(function(e){return e.legajo===num}))return p.showToast("Legajo "+num+" ya existe","error");
+      try {
+        await FB.saveEmpleado({legajo:num,nombre:nombreVal.toUpperCase()});
+        var u=p.employees.concat({legajo:num,nombre:nombreVal.toUpperCase()});u.sort(function(a,b){return a.legajo-b.legajo});
+        p.setEmployees(u);p.showToast("Legajo "+num+" agregado");
+      } catch(err) { p.showToast("Error al guardar: " + err.message, "error"); return; }
     }
     setLegajo("");setNombre("");
   };
@@ -335,7 +343,7 @@ function TabVales(p){
   var radioTypes=["ADELANTO","MERCADER\u00cdA"];
   return h("div",null,
     h("div",{style:{display:"flex",gap:4,marginBottom:20,background:cl.card,borderRadius:10,padding:4,width:"fit-content"}},
-      ["cargar","editar"].map(function(m){return h("button",{key:m,onClick:function(){setMode(m);reset()},style:{padding:"10px 22px",borderRadius:8,border:"none",fontWeight:600,fontSize:14,background:mode===m?cl.accent:"transparent",color:mode===m?"#fff":cl.muted,cursor:"pointer"}},m==="cargar"?"Cargar Vale":"Editar Vales")})),
+      ["cargar","editar"].map(function(m){return h("button",{key:m,type:"button",onClick:function(){setMode(m);reset()},style:{padding:"10px 22px",borderRadius:8,border:"none",fontWeight:600,fontSize:14,background:mode===m?cl.accent:"transparent",color:mode===m?"#fff":cl.muted,cursor:"pointer"}},m==="cargar"?"Cargar Vale":"Editar Vales")})),
     mode==="cargar"?h("div",{style:{display:"flex",gap:24,flexWrap:"wrap"}},
       h("div",{style:{flex:"1 1 360px",background:cl.card,borderRadius:12,padding:24}},
         h("h3",{style:{margin:"0 0 20px",color:cl.text,fontSize:18}},"Nuevo Vale"),
@@ -442,7 +450,7 @@ function App(){
             online?"Conectado \u2014 Firestore":"Sin conexi\u00f3n \u2014 modo offline")))),
     h("nav",{style:{background:cl.header,borderBottom:"1px solid "+cl.border+"33",padding:"0 24px"}},
       h("div",{style:{maxWidth:1100,margin:"0 auto",display:"flex",gap:0,overflowX:"auto"}},
-        TABS.map(function(t,i){return h("button",{key:t,onClick:function(){setTab(i)},style:{padding:"14px 24px",border:"none",fontWeight:600,fontSize:14,background:"transparent",cursor:"pointer",color:tab===i?cl.accent:cl.muted,borderBottom:tab===i?"3px solid "+cl.accent:"3px solid transparent"}},t)}))),
+        TABS.map(function(t,i){return h("button",{key:t,type:"button",onClick:function(){setTab(i)},style:{padding:"14px 24px",border:"none",fontWeight:600,fontSize:14,background:"transparent",cursor:"pointer",color:tab===i?cl.accent:cl.muted,borderBottom:tab===i?"3px solid "+cl.accent:"3px solid transparent"}},t)}))),
     h("main",{style:{maxWidth:1100,margin:"0 auto",padding:24}},
       tab===0&&h(TabPersonal,{employees:employees,setEmployees:saveEmpAndCache,vouchers:vouchers,setVouchers:saveValesAndCache,showToast:showToast}),
       tab===1&&h(TabVales,{employees:employees,vouchers:vouchers,setVouchers:saveValesAndCache,showToast:showToast}),
@@ -452,6 +460,17 @@ function App(){
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function() {
+    navigator.serviceWorker.register("sw.js").then(function(reg) {
+      console.log("SW registrado:", reg.scope);
+    }).catch(function(err) {
+      console.log("SW error:", err);
+    });
+  });
+}
 </script>
 </body>
 </html>
