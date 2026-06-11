@@ -228,7 +228,7 @@ function TabPersonal(p){
       } catch(err) { console.error("SAVE: Firestore sync error:", err); }
     }
   };
-  var del=async function(idx){if(!confirm("\u00bfEliminar legajo "+p.employees[idx].legajo+"?"))return;await FB.deleteEmpleado(p.employees[idx].legajo);p.setEmployees(p.employees.filter(function(_,i){return i!==idx}));p.showToast("Legajo eliminado")};
+  var del=async function(idx){if(!confirm("\u00bfEliminar legajo "+p.employees[idx].legajo+"?"))return;var leg=p.employees[idx].legajo;p.setEmployees(p.employees.filter(function(_,i){return i!==idx}));p.showToast("Legajo eliminado");try{await FB.deleteEmpleado(leg);console.log("DEL: synced")}catch(err){console.error("DEL: sync error",err)}};
   var filtered=p.employees.filter(function(e){return e.nombre.includes(search.toUpperCase())||String(e.legajo).includes(search)});
 
   return h("div",{style:{display:"flex",gap:24,flexWrap:"wrap"}},
@@ -340,10 +340,10 @@ function TabVales(p){
   var _fl=React.useState(""),fLeg=_fl[0],setFLeg=_fl[1];
   var lookup=function(leg){setLegajo(leg);var e=p.employees.find(function(x){return x.legajo===parseInt(leg)});setEmpName(e?e.nombre:"")};
   var reset=function(){setLegajo("");setEmpName("");setValor("");setObs("");setEditId(null);setMes(CM);setAnio(String(CY));setTipo("ADELANTO")};
-  var save=async function(){var num=parseInt(legajo);if(isNaN(num)||!empName)return p.showToast("Seleccionar legajo v\u00e1lido","error");var v=parseFloat(valor);if(isNaN(v)||v<=0)return p.showToast("Valor debe ser mayor a 0","error");if(editId!==null){var updated={id:editId,legajo:num,nombre:empName,mes:mes,anio:parseInt(anio),tipo:tipo,valor:v,obs:obs,fecha:new Date().toISOString()};await FB.saveVale(updated);p.setVouchers(p.vouchers.map(function(x){return x.id===editId?updated:x}));p.showToast("Vale actualizado");if(mode==="editar"){setEditId(null);setValor("");setObs("")}else reset()}else{var nv={legajo:num,nombre:empName,mes:mes,anio:parseInt(anio),tipo:tipo,valor:v,obs:obs,fecha:new Date().toISOString()};var saved=await FB.saveVale(nv);p.setVouchers(p.vouchers.concat(saved));p.showToast("Vale cargado");reset()}};
+  var save=async function(){var num=parseInt(legajo);if(isNaN(num)||!empName)return p.showToast("Seleccionar legajo v\u00e1lido","error");var v=parseFloat(valor);if(isNaN(v)||v<=0)return p.showToast("Valor debe ser mayor a 0","error");if(editId!==null){var updated={id:editId,legajo:num,nombre:empName,mes:mes,anio:parseInt(anio),tipo:tipo,valor:v,obs:obs,fecha:new Date().toISOString()};p.setVouchers(p.vouchers.map(function(x){return x.id===editId?updated:x}));p.showToast("Vale actualizado");if(mode==="editar"){setEditId(null);setValor("");setObs("")}else reset();try{await FB.saveVale(updated);console.log("VALE: synced update")}catch(err){console.error("VALE: sync error",err)}}else{var docId="v_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);var nv={id:docId,legajo:num,nombre:empName,mes:mes,anio:parseInt(anio),tipo:tipo,valor:v,obs:obs,fecha:new Date().toISOString()};p.setVouchers(p.vouchers.concat(nv));p.showToast("Vale cargado");reset();try{await FB.saveVale(nv);console.log("VALE: synced new")}catch(err){console.error("VALE: sync error",err)}}};
   var selectForEdit=function(v){setLegajo(String(v.legajo));setEmpName(v.nombre);setMes(v.mes);setAnio(String(v.anio));setTipo(v.tipo);setValor(String(v.valor));setObs(v.obs||"");setEditId(v.id)};
   var cancelEdit=function(){setEditId(null);setLegajo("");setEmpName("");setValor("");setObs("")};
-  var delVale=async function(id){if(!confirm("\u00bfEliminar este vale?"))return;await FB.deleteValeDoc(id);p.setVouchers(p.vouchers.filter(function(x){return x.id!==id}));p.showToast("Vale eliminado");if(editId===id)cancelEdit()};
+  var delVale=async function(id){if(!confirm("\u00bfEliminar este vale?"))return;p.setVouchers(p.vouchers.filter(function(x){return x.id!==id}));p.showToast("Vale eliminado");if(editId===id)cancelEdit();try{await FB.deleteValeDoc(id);console.log("VALE: synced delete")}catch(err){console.error("VALE: sync error",err)}};
   var filteredSrch=p.employees.filter(function(e){return e.nombre.includes(srchTerm.toUpperCase())||String(e.legajo).includes(srchTerm)});
   var editList=p.vouchers.filter(function(v){if(fMes!=="TODOS"&&v.mes!==fMes)return false;if(v.anio!==parseInt(fAnio))return false;if(fLeg.trim()&&!String(v.legajo).includes(fLeg)&&!v.nombre.toUpperCase().includes(fLeg.toUpperCase()))return false;return true}).sort(function(a,b){return a.legajo-b.legajo});
   var years=[];for(var y=CY-2;y<=CY+1;y++)years.push(String(y));
@@ -453,12 +453,20 @@ function App(){
       } catch(err) {
         console.error("INIT: error or timeout:", err.message);
         // Firestore timed out — use seed data directly
-        console.log("INIT: falling back to seed data");
+        console.log("INIT: falling back to seed data with vales");
         var fallbackEmps = SEED_EMP.map(function(e) { return { legajo: e.l, nombre: e.n }; });
         fallbackEmps.sort(function(a, b) { return a.legajo - b.legajo; });
+        var empMap = {};
+        fallbackEmps.forEach(function(e) { empMap[e.legajo] = e.nombre; });
+        var MN = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO"];
+        var fallbackVales = SV.map(function(v, i) {
+          return { id: "seed_" + i, legajo: v[0], nombre: empMap[v[0]] || "LEGAJO " + v[0], mes: MN[v[1]], anio: 2026, tipo: "ADELANTO", valor: v[2], obs: v[3], fecha: "2026-0" + (v[1]+1) + "-15T12:00:00.000Z" };
+        });
         CACHE.setEmps(fallbackEmps);
+        CACHE.setVales(fallbackVales);
         setEmployees(fallbackEmps);
-        setVouchers([]);
+        setVouchers(fallbackVales);
+        console.log("INIT: fallback loaded", fallbackEmps.length, "emps,", fallbackVales.length, "vales");
       }
       setLoading(false);
     })();
