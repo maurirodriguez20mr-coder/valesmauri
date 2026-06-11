@@ -48,9 +48,7 @@ firebase.initializeApp({
 });
 
 var db = firebase.firestore();
-db.enablePersistence({ synchronizeTabs: false }).catch(function(err) {
-  console.warn("Offline persistence error:", err.code);
-});
+// Persistence handled by localStorage cache - no IndexedDB conflict
 
 // --- Cache helpers ---
 var CACHE = {
@@ -194,32 +192,41 @@ function TabPersonal(p){
   var save=async function(){
     var legajoVal = legajo.trim();
     var nombreVal = nombre.trim();
-    console.log("SAVE clicked:", legajoVal, nombreVal);
+    console.log("SAVE:", legajoVal, nombreVal);
     if(!legajoVal || !nombreVal) return p.showToast("Completar legajo y nombre","error");
     var num = parseInt(legajoVal, 10);
     if(isNaN(num) || num <= 0) return p.showToast("Legajo debe ser un número válido","error");
     if(editIdx>=0){
       var oldLeg=origLeg;
       if(num!==oldLeg&&p.employees.some(function(e){return e.legajo===num}))return p.showToast("Ese legajo ya existe","error");
+      // Optimistic update - UI first
+      var u=p.employees.slice();u[editIdx]={legajo:num,nombre:nombreVal.toUpperCase()};u.sort(function(a,b){return a.legajo-b.legajo});
+      p.setEmployees(u);
+      if(num!==oldLeg||nombreVal.toUpperCase()!==p.employees[editIdx].nombre){
+        p.setVouchers(p.vouchers.map(function(v){return v.legajo===oldLeg?Object.assign({},v,{legajo:num,nombre:nombreVal.toUpperCase()}):v}));
+      }
+      setEditIdx(-1);setOrigLeg(null);setLegajo("");setNombre("");
+      p.showToast("Legajo actualizado");
+      // Sync to Firestore in background
       try {
         if(num!==oldLeg)await FB.deleteEmpleado(oldLeg);
         await FB.saveEmpleado({legajo:num,nombre:nombreVal.toUpperCase()});
-        if(num!==oldLeg||nombreVal.toUpperCase()!==p.employees[editIdx].nombre){
-          await FB.updateValesForLegajo(oldLeg,num,nombreVal.toUpperCase(),p.vouchers);
-          p.setVouchers(p.vouchers.map(function(v){return v.legajo===oldLeg?Object.assign({},v,{legajo:num,nombre:nombreVal.toUpperCase()}):v}));
-        }
-        var u=p.employees.slice();u[editIdx]={legajo:num,nombre:nombreVal.toUpperCase()};u.sort(function(a,b){return a.legajo-b.legajo});
-        p.setEmployees(u);setEditIdx(-1);setOrigLeg(null);p.showToast("Legajo actualizado");
-      } catch(err) { p.showToast("Error al guardar: " + err.message, "error"); return; }
+        if(num!==oldLeg)await FB.updateValesForLegajo(oldLeg,num,nombreVal.toUpperCase(),p.vouchers);
+        console.log("SAVE: synced to Firestore");
+      } catch(err) { console.error("SAVE: Firestore sync error:", err); }
     }else{
       if(p.employees.some(function(e){return e.legajo===num}))return p.showToast("Legajo "+num+" ya existe","error");
+      // Optimistic update - UI first
+      var u=p.employees.concat({legajo:num,nombre:nombreVal.toUpperCase()});u.sort(function(a,b){return a.legajo-b.legajo});
+      p.setEmployees(u);
+      setLegajo("");setNombre("");
+      p.showToast("Legajo "+num+" agregado");
+      // Sync to Firestore in background
       try {
         await FB.saveEmpleado({legajo:num,nombre:nombreVal.toUpperCase()});
-        var u=p.employees.concat({legajo:num,nombre:nombreVal.toUpperCase()});u.sort(function(a,b){return a.legajo-b.legajo});
-        p.setEmployees(u);p.showToast("Legajo "+num+" agregado");
-      } catch(err) { p.showToast("Error al guardar: " + err.message, "error"); return; }
+        console.log("SAVE: synced to Firestore");
+      } catch(err) { console.error("SAVE: Firestore sync error:", err); }
     }
-    setLegajo("");setNombre("");
   };
   var del=async function(idx){if(!confirm("\u00bfEliminar legajo "+p.employees[idx].legajo+"?"))return;await FB.deleteEmpleado(p.employees[idx].legajo);p.setEmployees(p.employees.filter(function(_,i){return i!==idx}));p.showToast("Legajo eliminado")};
   var filtered=p.employees.filter(function(e){return e.nombre.includes(search.toUpperCase())||String(e.legajo).includes(search)});
