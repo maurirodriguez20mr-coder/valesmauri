@@ -33,6 +33,13 @@
   </div>
 </div>
 
+<!-- Global promise that bridges Firebase module and React -->
+<script>
+  window.__fbReady = new Promise(function(resolve) {
+    window.__fbReadyResolve = resolve;
+  });
+</script>
+
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
@@ -161,8 +168,9 @@ window.__FB = {
   saveVale, deleteValeDoc, updateValesForLegajo, seedIfEmpty
 };
 
-// Signal ready
-window.dispatchEvent(new Event("fb-ready"));
+// Resolve the ready promise so React knows Firebase is available
+if (window.__fbReadyResolve) window.__fbReadyResolve();
+window.__fbReady = Promise.resolve();
 </script>
 
 <!-- React app -->
@@ -679,12 +687,12 @@ function App() {
 
   useEffect(() => {
     const init = async () => {
-      const fb = window.__FB;
-      if (!fb) return;
-      setFB(fb);
       try {
+        await window.__fbReady;
+        const fb = window.__FB;
+        setFB(fb);
         const { emps, seeded } = await fb.seedIfEmpty();
-        const vals = seeded ? await fb.loadVales() : await fb.loadVales();
+        const vals = await fb.loadVales();
         setEmployees(emps);
         setVouchers(vals);
       } catch (err) {
@@ -692,8 +700,7 @@ function App() {
       }
       setLoading(false);
     };
-    if (window.__FB) init();
-    else window.addEventListener("fb-ready", init, { once: true });
+    init();
   }, []);
 
   const showToast = useCallback((m, t) => setToast({ message: m, type: t || "success" }), []);
