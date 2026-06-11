@@ -52,6 +52,15 @@ db.enablePersistence({ synchronizeTabs: false }).catch(function(err) {
   console.warn("Offline persistence error:", err.code);
 });
 
+// --- Cache helpers ---
+var CACHE = {
+  getEmps: function() { try { var d = localStorage.getItem("pm_emps_cache"); return d ? JSON.parse(d) : null; } catch(e) { return null; } },
+  setEmps: function(d) { try { localStorage.setItem("pm_emps_cache", JSON.stringify(d)); } catch(e) {} },
+  getVales: function() { try { var d = localStorage.getItem("pm_vales_cache"); return d ? JSON.parse(d) : null; } catch(e) { return null; } },
+  setVales: function(d) { try { localStorage.setItem("pm_vales_cache", JSON.stringify(d)); } catch(e) {} },
+  clear: function() { try { localStorage.removeItem("pm_emps_cache"); localStorage.removeItem("pm_vales_cache"); } catch(e) {} }
+};
+
 // --- DB Helpers ---
 var FB = {
   loadEmpleados: async function() {
@@ -59,13 +68,33 @@ var FB = {
     var arr = [];
     snap.forEach(function(d) { arr.push(Object.assign({ id: d.id }, d.data())); });
     arr.sort(function(a, b) { return a.legajo - b.legajo; });
+    CACHE.setEmps(arr);
     return arr;
   },
   loadVales: async function() {
     var snap = await db.collection("vales").get();
     var arr = [];
     snap.forEach(function(d) { arr.push(Object.assign({ id: d.id }, d.data())); });
+    CACHE.setVales(arr);
     return arr;
+  },
+  loadFromCacheOrFirestore: async function() {
+    var cachedEmps = CACHE.getEmps();
+    var cachedVales = CACHE.getVales();
+    if (cachedEmps && cachedVales && cachedEmps.length > 0) {
+      // Return cache immediately, sync in background
+      setTimeout(async function() {
+        try {
+          await FB.loadEmpleados();
+          await FB.loadVales();
+        } catch(e) { /* offline, no problem */ }
+      }, 100);
+      return { emps: cachedEmps, vales: cachedVales, fromCache: true };
+    }
+    // No cache — load from Firestore
+    var emps = await FB.loadEmpleados();
+    var vales = await FB.loadVales();
+    return { emps: emps, vales: vales, fromCache: false };
   },
   saveEmpleado: async function(emp) {
     await db.collection("empleados").doc("leg_" + emp.legajo).set({ legajo: emp.legajo, nombre: emp.nombre });
@@ -94,8 +123,14 @@ var FB = {
     if (count > 0) await batch.commit();
   },
   seedIfEmpty: async function() {
-    var emps = await FB.loadEmpleados();
-    if (emps.length > 0) return { emps: emps, seeded: false };
+    // Check cache first — if we have data, no need to seed
+    var cachedEmps = CACHE.getEmps();
+    if (cachedEmps && cachedEmps.length > 0) {
+      return { emps: cachedEmps, seeded: false };
+    }
+    var snap = await db.collection("empleados").limit(1).get();
+    if (!snap.empty) return { emps: null, seeded: false }; // will be loaded by loadFromCacheOrFirestore
+    // Seed
     var seedEmps = SEED_EMP.map(function(e) { return { legajo: e.l, nombre: e.n }; });
     var batch = db.batch();
     for (var i = 0; i < seedEmps.length; i++) {
@@ -119,7 +154,8 @@ var FB = {
       }
       await vb.commit();
     }
-    return { emps: seedEmps.map(function(e) { return Object.assign({ id: "leg_" + e.legajo }, e); }), seeded: true };
+    var seededEmps = seedEmps.map(function(e) { return Object.assign({ id: "leg_" + e.legajo }, e); });
+    return { emps: seededEmps, seeded: true };
   }
 };
 
@@ -361,14 +397,31 @@ function App(){
   React.useEffect(function(){
     (async function(){
       try{
-        var res=await FB.seedIfEmpty();
-        var vals=await FB.loadVales();
-        setEmployees(res.emps);setVouchers(vals);
+        var seedRes = await FB.seedIfEmpty();
+        var result;
+        if (seedRes.seeded) {
+          // Just seeded — load fresh
+          result = await FB.loadFromCacheOrFirestore();
+        } else if (seedRes.emps) {
+          // Had cached emps from seedIfEmpty check
+          var cachedVales = CACHE.getVales();
+          if (cachedVales && cachedVales.length > 0) {
+            result = { emps: seedRes.emps, vales: cachedVales };
+          } else {
+            result = await FB.loadFromCacheOrFirestore();
+          }
+        } else {
+          result = await FB.loadFromCacheOrFirestore();
+        }
+        setEmployees(result.emps);
+        setVouchers(result.vales);
       }catch(err){console.error("Error:",err)}
       setLoading(false);
     })();
   },[]);
 
+  var saveEmpAndCache = function(newList) { setEmployees(newList); CACHE.setEmps(newList); };
+  var saveValesAndCache = function(newList) { setVouchers(newList); CACHE.setVales(newList); };
   var showToast=React.useCallback(function(m,t){setToast({message:m,type:t||"success"})},[]);
 
   if(loading)return h("div",{style:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}},
@@ -391,8 +444,8 @@ function App(){
       h("div",{style:{maxWidth:1100,margin:"0 auto",display:"flex",gap:0,overflowX:"auto"}},
         TABS.map(function(t,i){return h("button",{key:t,onClick:function(){setTab(i)},style:{padding:"14px 24px",border:"none",fontWeight:600,fontSize:14,background:"transparent",cursor:"pointer",color:tab===i?cl.accent:cl.muted,borderBottom:tab===i?"3px solid "+cl.accent:"3px solid transparent"}},t)}))),
     h("main",{style:{maxWidth:1100,margin:"0 auto",padding:24}},
-      tab===0&&h(TabPersonal,{employees:employees,setEmployees:setEmployees,vouchers:vouchers,setVouchers:setVouchers,showToast:showToast}),
-      tab===1&&h(TabVales,{employees:employees,vouchers:vouchers,setVouchers:setVouchers,showToast:showToast}),
+      tab===0&&h(TabPersonal,{employees:employees,setEmployees:saveEmpAndCache,vouchers:vouchers,setVouchers:saveValesAndCache,showToast:showToast}),
+      tab===1&&h(TabVales,{employees:employees,vouchers:vouchers,setVouchers:saveValesAndCache,showToast:showToast}),
       tab===2&&h(TabBusqueda,{employees:employees}),
       tab===3&&h(TabInformes,{vouchers:vouchers,employees:employees})),
     toast&&h(Toast,{message:toast.message,type:toast.type,onClose:function(){setToast(null)}}));
