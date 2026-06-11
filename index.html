@@ -404,26 +404,55 @@ function App(){
 
   React.useEffect(function(){
     (async function(){
+      console.log("INIT: starting...");
       try{
-        var seedRes = await FB.seedIfEmpty();
-        var result;
-        if (seedRes.seeded) {
-          // Just seeded — load fresh
-          result = await FB.loadFromCacheOrFirestore();
-        } else if (seedRes.emps) {
-          // Had cached emps from seedIfEmpty check
-          var cachedVales = CACHE.getVales();
-          if (cachedVales && cachedVales.length > 0) {
-            result = { emps: seedRes.emps, vales: cachedVales };
-          } else {
-            result = await FB.loadFromCacheOrFirestore();
-          }
-        } else {
-          result = await FB.loadFromCacheOrFirestore();
+        // Try cache first (instant)
+        var cachedEmps = CACHE.getEmps();
+        var cachedVales = CACHE.getVales();
+        if (cachedEmps && cachedEmps.length > 0 && cachedVales) {
+          console.log("INIT: loaded from cache", cachedEmps.length, "emps,", cachedVales.length, "vales");
+          setEmployees(cachedEmps);
+          setVouchers(cachedVales);
+          setLoading(false);
+          // Sync Firestore in background
+          setTimeout(async function() {
+            try { await FB.loadEmpleados(); await FB.loadVales(); console.log("INIT: background sync done"); } catch(e) { console.log("INIT: background sync skipped"); }
+          }, 500);
+          return;
         }
+        console.log("INIT: no cache, trying Firestore...");
+        // No cache — try Firestore with 8 second timeout
+        var timeout = new Promise(function(_, reject) {
+          setTimeout(function() { reject(new Error("timeout")); }, 8000);
+        });
+        var firestoreLoad = (async function() {
+          console.log("INIT: checking if seed needed...");
+          var snap = await db.collection("empleados").limit(1).get();
+          console.log("INIT: Firestore responded, empty:", snap.empty);
+          if (snap.empty) {
+            console.log("INIT: seeding data...");
+            await FB.seedIfEmpty();
+          }
+          console.log("INIT: loading empleados...");
+          var emps = await FB.loadEmpleados();
+          console.log("INIT: loading vales...");
+          var vales = await FB.loadVales();
+          console.log("INIT: done!", emps.length, "emps,", vales.length, "vales");
+          return { emps: emps, vales: vales };
+        })();
+        var result = await Promise.race([firestoreLoad, timeout]);
         setEmployees(result.emps);
         setVouchers(result.vales);
-      }catch(err){console.error("Error:",err)}
+      } catch(err) {
+        console.error("INIT: error or timeout:", err.message);
+        // Firestore timed out — use seed data directly
+        console.log("INIT: falling back to seed data");
+        var fallbackEmps = SEED_EMP.map(function(e) { return { legajo: e.l, nombre: e.n }; });
+        fallbackEmps.sort(function(a, b) { return a.legajo - b.legajo; });
+        CACHE.setEmps(fallbackEmps);
+        setEmployees(fallbackEmps);
+        setVouchers([]);
+      }
       setLoading(false);
     })();
   },[]);
