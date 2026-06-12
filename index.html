@@ -428,9 +428,9 @@ function App(){
           return;
         }
         console.log("INIT: no cache, trying Firestore...");
-        // No cache — try Firestore with 8 second timeout
+        // No cache — try Firestore. Seeding 610 vales can take time, so generous timeout
         var timeout = new Promise(function(_, reject) {
-          setTimeout(function() { reject(new Error("timeout")); }, 8000);
+          setTimeout(function() { reject(new Error("timeout")); }, 25000);
         });
         var firestoreLoad = (async function() {
           console.log("INIT: checking if seed needed...");
